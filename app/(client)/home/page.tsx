@@ -15,6 +15,8 @@ import {
     FormControl,
     InputLabel,
     Paper,
+    Tabs,
+    Tab,
     ToggleButtonGroup,
     ToggleButton,
     InputAdornment,
@@ -45,6 +47,7 @@ import { toast } from 'react-toastify';
 const ReactQuill = dynamic(() => import("react-quill"), { ssr: false })
 
 export default function UltrasoundInterface() {
+    const [tab, setTab] = useState(0);
     const [editorContent, setEditorContent] = useState("") // react-quill editor
 
     const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -63,6 +66,12 @@ export default function UltrasoundInterface() {
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const recordedChunksRef = useRef<Blob[]>([]);
+
+    const [speechText, setSpeechText] = useState("");
+    const recognitionRef = useRef<any>(null);
+    const [isListening, setIsListening] = useState(false);
+
+    const [selectedVoice, setSelectedVoice] = useState("vi-VN-Wavenet-C");
 
     useEffect(() => {
         navigator.mediaDevices.enumerateDevices().then((mediaDevices) => {
@@ -234,6 +243,7 @@ export default function UltrasoundInterface() {
         }
     };
 
+    // handle download
     const forceDownload = async (url: string, filename: string) => {
         const response = await fetch(url);
         const blob = await response.blob();
@@ -248,250 +258,320 @@ export default function UltrasoundInterface() {
         window.URL.revokeObjectURL(blobUrl);
     };
 
-    console.log('capturedImages', capturedImages);
-    console.log('recordedVideos', recordedVideos);
+    // text to
+    const startListening = () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) return alert("Trình duyệt không hỗ trợ");
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "vi-VN";
+        recognition.onresult = (event: any) => {
+            let finalTranscript = "";
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                finalTranscript += event.results[i][0].transcript;
+            }
+            setSpeechText(finalTranscript);
+        };
+        recognition.onerror = console.error;
+        recognitionRef.current = recognition;
+        recognition.start();
+        setIsListening(true);
+    };
+
+    const stopListening = () => {
+        recognitionRef.current?.stop();
+        setIsListening(false);
+    };
+
+    const speakText = async () => {
+        const token = process.env.NEXT_PUBLIC_GOOGLE_TTS_TOKEN; // cần thay bằng token thực tế được cấp
+        const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                input: { text: speechText },
+                voice: { languageCode: "vi-VN", name: `${selectedVoice}` },
+                audioConfig: { audioEncoding: "MP3" }
+            })
+        });
+        const result = await response.json();
+        const audio = new Audio("data:audio/mp3;base64," + result.audioContent);
+        audio.play();
+    };
+
+    const speakTextNoApi = () => {
+        const utterance = new SpeechSynthesisUtterance(speechText);
+        utterance.lang = "vi-VN";
+        window.speechSynthesis.speak(utterance);
+    };
 
     return (
-        <div className="flex items-center justify-center min-h-screen w-full bg-gray-200">
-            <Box className="grid grid-cols-1 md:grid-cols-2 gap-4 p-10 w-full h-full bg-white dropshaw">
-                {/* Left Column */}
-                <Box className="flex flex-col gap-4">
-                    {/* Camera Device Dropdown */}
-                    <FormControl fullWidth className="bg-white">
-                        <InputLabel>Chọn Camera</InputLabel>
-                        <Select
-                            value={selectedDeviceId}
-                            label="Chọn Camera"
-                            onChange={(e) => setSelectedDeviceId(e.target.value)}
-                        >
-                            {devices.map((device) => (
-                                <MenuItem key={device.deviceId} value={device.deviceId}>
-                                    {device.label || `Camera ${device.deviceId}`}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+        <div className="flex flex-col items-center  min-h-screen w-full pt-2">
 
-                    {/* Resolution Dropdown */}
-                    <FormControl fullWidth className="bg-white">
-                        <InputLabel>Độ phân giải</InputLabel>
-                        <Select
-                            value={`${resolution.width}x${resolution.height}`}
-                            label="Độ phân giải"
-                            onChange={(e) => {
-                                const [w, h] = e.target.value.split("x").map(Number);
-                                setResolution({ width: w, height: h });
-                            }}
-                        >
-                            <MenuItem value="640x480">640 x 480</MenuItem>
-                            <MenuItem value="1280x720">1280 x 720</MenuItem>
-                            <MenuItem value="1920x1080">1920 x 1080</MenuItem>
-                        </Select>
-                    </FormControl>
+            <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+                <Tab label="🎥 Quay video" />
+                <Tab label="🗣️ Chuyển giọng nói" />
+            </Tabs>
 
-                    {/* Camera Toggle Button */}
-                    <Button
-                        variant="contained"
-                        startIcon={<Settings />}
-                        className="bg-blue-100 text-blue-600 hover:bg-blue-200 w-fit"
-                        onClick={handleCameraClick}
-                    >
-                        {isCameraOn ? "Tắt Camera" : "Chọn Camera"}
-                    </Button>
+            {
+                tab === 0 &&
+                <div className='px-10 pb-10  w-full h-full space-y-2'>
+                    <Box className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full h-full bg-white dropshaw">
+                        <Typography className='md:col-span-2 col-span-1 flex items-center h-14'>
+                            <p className='text-2xl font-bold'>
+                                Chức năng video
+                            </p>
+                        </Typography>
 
-                    <TextField label="Barcode" variant="outlined" fullWidth className="bg-white" />
+                        {/* Left Column */}
+                        <Box className="flex flex-col gap-4">
+                            {/* Camera Device Dropdown */}
+                            <FormControl fullWidth className="bg-white">
+                                <InputLabel>Chọn Camera</InputLabel>
+                                <Select
+                                    value={selectedDeviceId}
+                                    label="Chọn Camera"
+                                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                                >
+                                    {devices.map((device) => (
+                                        <MenuItem key={device.deviceId} value={device.deviceId}>
+                                            {device.label || `Camera ${device.deviceId}`}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
 
-                    <TextField label="Tên khách hàng" variant="outlined" fullWidth className="bg-white" />
+                            {/* Resolution Dropdown */}
+                            <FormControl fullWidth className="bg-white">
+                                <InputLabel>Độ phân giải</InputLabel>
+                                <Select
+                                    value={`${resolution.width}x${resolution.height}`}
+                                    label="Độ phân giải"
+                                    onChange={(e) => {
+                                        const [w, h] = e.target.value.split("x").map(Number);
+                                        setResolution({ width: w, height: h });
+                                    }}
+                                >
+                                    <MenuItem value="640x480">640 x 480</MenuItem>
+                                    <MenuItem value="1280x720">1280 x 720</MenuItem>
+                                    <MenuItem value="1920x1080">1920 x 1080</MenuItem>
+                                </Select>
+                            </FormControl>
 
-                    <Box className="grid grid-cols-2 gap-4">
-                        <TextField
-                            label="Ngày sinh"
-                            type="date"
-                            InputLabelProps={{ shrink: true }}
-                            InputProps={{
-                                endAdornment: (
-                                    <InputAdornment position="end">
-                                        <IconButton edge="end">
-                                            <Close fontSize="small" />
-                                        </IconButton>
-                                    </InputAdornment>
-                                ),
-                            }}
-                            className="bg-white"
-                        />
+                            {/* Camera Toggle Button */}
+                            <Button
+                                variant="contained"
+                                startIcon={<Settings />}
+                                className="bg-blue-100 text-blue-600 hover:bg-blue-200 w-fit"
+                                onClick={handleCameraClick}
+                            >
+                                {isCameraOn ? "Tắt Camera" : "Chọn Camera"}
+                            </Button>
 
-                        <FormControl fullWidth className="bg-white">
-                            <InputLabel>Giới tính</InputLabel>
-                            <Select value="nam" label="Giới tính">
-                                <MenuItem value="nam">Nam</MenuItem>
-                                <MenuItem value="nu">Nữ</MenuItem>
-                            </Select>
-                        </FormControl>
-                    </Box>
+                            <TextField label="Barcode" variant="outlined" fullWidth className="bg-white" />
 
-                    <Box className="grid grid-cols-2 gap-4">
-                        <Button
-                            variant="contained"
-                            startIcon={<Videocam />}
-                            className="bg-red-500 hover:bg-red-600"
-                            onClick={handleRecordVideo}
-                        >
-                            {isRecording ? "Dừng Quay" : "Quay Video"}
-                        </Button>
-                        <Button
-                            variant="contained"
-                            startIcon={<PhotoCamera />}
-                            className="bg-blue-600 hover:bg-blue-700"
-                            onClick={handleCaptureImage}
-                        >
-                            Chụp Ảnh
-                        </Button>
-                    </Box>
+                            <TextField label="Tên khách hàng" variant="outlined" fullWidth className="bg-white" />
 
-                    <Paper elevation={1} className="relative aspect-video bg-black w-full">
-                        {
-                            isCameraOn ?
-                                (
-                                    <video
-                                        ref={videoRef}
-                                        autoPlay
-                                        playsInline
-                                        muted
-                                        className="w-full h-full object-cover"
+                            <Box className="grid grid-cols-2 gap-4">
+                                <TextField
+                                    label="Ngày sinh"
+                                    type="date"
+                                    InputLabelProps={{ shrink: true }}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <IconButton edge="end">
+                                                    <Close fontSize="small" />
+                                                </IconButton>
+                                            </InputAdornment>
+                                        ),
+                                    }}
+                                    className="bg-white"
+                                />
+
+                                <FormControl fullWidth className="bg-white">
+                                    <InputLabel>Giới tính</InputLabel>
+                                    <Select value="nam" label="Giới tính">
+                                        <MenuItem value="nam">Nam</MenuItem>
+                                        <MenuItem value="nu">Nữ</MenuItem>
+                                    </Select>
+                                </FormControl>
+                            </Box>
+
+                            <Box className="grid grid-cols-2 gap-4">
+                                <Button
+                                    variant="contained"
+                                    startIcon={<Videocam />}
+                                    className="bg-red-500 hover:bg-red-600"
+                                    onClick={handleRecordVideo}
+                                >
+                                    {isRecording ? "Dừng Quay" : "Quay Video"}
+                                </Button>
+                                <Button
+                                    variant="contained"
+                                    startIcon={<PhotoCamera />}
+                                    className="bg-blue-600 hover:bg-blue-700"
+                                    onClick={handleCaptureImage}
+                                >
+                                    Chụp Ảnh
+                                </Button>
+                            </Box>
+
+                            <Paper elevation={1} className="relative aspect-video bg-black w-full">
+                                {
+                                    isCameraOn ?
+                                        (
+                                            <video
+                                                ref={videoRef}
+                                                autoPlay
+                                                playsInline
+                                                muted
+                                                className="w-full h-full object-cover"
+                                            />
+                                        )
+                                        :
+                                        (
+                                            <Image
+                                                src={"/default/default.png"}
+                                                alt="Ultrasound Image"
+                                                fill
+                                                className="object-cover"
+                                            />
+                                        )
+                                }
+                            </Paper>
+                        </Box>
+
+                        {/* Right Column */}
+                        <Box className="flex flex-col gap-4">
+                            {/* React Quill Editor */}
+                            <Box className="flex flex-col gap-2">
+                                <Box className="border rounded-md bg-white overflow-hidden">
+                                    <ReactQuill
+                                        theme="snow"
+                                        value={editorContent}
+                                        onChange={setEditorContent}
+                                        modules={modules}
+                                        formats={formats}
+                                        className="h-[300px]"
                                     />
-                                )
-                                :
-                                (
-                                    <Image
-                                        src={"/default/default.png"}
-                                        alt="Ultrasound Image"
-                                        fill
-                                        className="object-cover"
-                                    />
-                                )
-                        }
-                    </Paper>
-                </Box>
+                                </Box>
+                            </Box>
 
-                {/* Right Column */}
-                <Box className="flex flex-col gap-4">
-                    {/* React Quill Editor */}
-                    <Box className="flex flex-col gap-2">
-                        <Box className="border rounded-md bg-white overflow-hidden">
-                            <ReactQuill
-                                theme="snow"
-                                value={editorContent}
-                                onChange={setEditorContent}
-                                modules={modules}
-                                formats={formats}
-                                className="h-[300px]"
-                            />
+                            <TextField label="Kết luận" multiline rows={4} variant="outlined" fullWidth className="bg-white" />
+
+                            <Box className="flex justify-between mt-4">
+                                <Button variant="outlined" startIcon={<CloudUpload />} className="text-blue-600 border-blue-600">
+                                    Tải Ảnh Lên
+                                </Button>
+                                <Button variant="contained" className="bg-blue-600 hover:bg-blue-700">
+                                    Lưu Kết Quả
+                                </Button>
+                            </Box>
+                        </Box>
+
+                        {/* Image select or video  */}
+                        <Box className="md:col-span-2 col-span-1 flex items-center justify-between mt-2">
+                            <IconButton>
+                                <KeyboardArrowLeft />
+                            </IconButton>
+                            <Box className="flex gap-2 overflow-x-auto py-2">
+                                {/* Hình ảnh đã chụp */}
+                                {capturedImages.map((img, index) => (
+                                    <Box key={`img-${index}`} className="relative w-52 h-36 flex-shrink-0 border rounded overflow-hidden">
+                                        <img src={img} alt={`Captured ${index}`} className="object-cover w-full h-full" />
+                                        <Box className="absolute top-1 left-1 flex gap-1">
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => {
+                                                    if (img) forceDownload(img, `image-${index}.jpg`);
+                                                }}
+                                            >
+                                                <CloudUpload fontSize="small" />
+                                            </IconButton>
+                                            <IconButton
+                                                size="small"
+                                                color="error"
+                                                onClick={() => setCapturedImages(prev => prev.filter((_, i) => i !== index))}
+                                            >
+                                                <Close fontSize="small" />
+                                            </IconButton>
+                                        </Box>
+                                    </Box>
+                                ))}
+
+                                {/* Video đã quay */}
+                                {recordedVideos.map((vid, index) => (
+                                    <Box key={`vid-${index}`} className="relative w-52 h-36 flex-shrink-0 border rounded overflow-hidden">
+                                        <video src={vid} controls className="object-cover w-full h-full" />
+
+                                        <Box className="absolute top-1 left-1 flex gap-1">
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => {
+                                                    if (vid) forceDownload(vid, `video-${index}.mp4`);
+                                                }}
+                                            >
+                                                <CloudUpload fontSize="small" />
+                                            </IconButton>
+                                            <IconButton
+                                                size="small"
+                                                color="error"
+                                                onClick={() => setRecordedVideos(prev => prev.filter((_, i) => i !== index))}
+                                            >
+                                                <Close fontSize="small" />
+                                            </IconButton>
+                                        </Box>
+                                    </Box>
+                                ))}
+                            </Box>
+                            <IconButton>
+                                <KeyboardArrowRight />
+                            </IconButton>
                         </Box>
                     </Box>
-
-                    <TextField label="Kết luận" multiline rows={4} variant="outlined" fullWidth className="bg-white" />
-
-                    <Box className="flex justify-between mt-4">
-                        <Button variant="outlined" startIcon={<CloudUpload />} className="text-blue-600 border-blue-600">
-                            Tải Ảnh Lên
+                </div>
+            }
+            {tab === 1 && (
+                <Box className="space-y-4 mt-4">
+                    <Typography className="font-bold">🎤 Speech to Text</Typography>
+                    <FormControl fullWidth className="bg-white">
+                        <InputLabel>Chọn Giọng Đọc</InputLabel>
+                        <Select
+                            value={selectedVoice}
+                            label="Chọn Giọng Đọc"
+                            onChange={(e) => setSelectedVoice(e.target.value)}
+                        >
+                            <MenuItem value="vi-VN-Wavenet-C">Giọng Nữ (C)</MenuItem>
+                            <MenuItem value="vi-VN-Wavenet-D">Giọng Nam (D)</MenuItem>
+                        </Select>
+                    </FormControl>
+                    <Button onClick={isListening ? stopListening : startListening} variant="contained">
+                        {isListening ? "🛑 Dừng" : "🎙️ Ghi âm"}
+                    </Button>
+                    <Box className="p-2 border bg-gray-100 min-h-[80px] whitespace-pre-wrap">{speechText}</Box>
+                    <Typography className="font-bold">📢 Text to Speech</Typography>
+                    <TextField
+                        multiline
+                        minRows={3}
+                        fullWidth
+                        value={speechText}
+                        onChange={(e) => setSpeechText(e.target.value)}
+                    />
+                    <div className='flex items-center gap-2'>
+                        <Button onClick={speakText} variant="contained" color="success">
+                            🔊 Đọc văn bản có API
                         </Button>
-                        <Button variant="contained" className="bg-blue-600 hover:bg-blue-700">
-                            Lưu Kết Quả
+                        <Button onClick={speakTextNoApi} variant="contained" color="success">
+                            🔊 Đọc văn bản Không API
                         </Button>
-                    </Box>
+                    </div>
                 </Box>
-
-                {/* Image select or video  */}
-                <Box className="md:col-span-2 col-span-1 flex items-center justify-between mt-2">
-                    <IconButton>
-                        <KeyboardArrowLeft />
-                    </IconButton>
-                    <Box className="flex gap-2 overflow-x-auto py-2">
-                        {/* Hình ảnh đã chụp */}
-                        {capturedImages.map((img, index) => (
-                            <Box key={`img-${index}`} className="relative w-52 h-36 flex-shrink-0 border rounded overflow-hidden">
-                                <img src={img} alt={`Captured ${index}`} className="object-cover w-full h-full" />
-                                <Box className="absolute top-1 left-1 flex gap-1">
-                                    <IconButton
-                                        size="small"
-                                        // onClick={() => {
-                                        //     const a = document.createElement("a");
-                                        //     a.href = img;
-                                        //     a.download = `image-${index}.jpg`;
-                                        //     a.click();
-                                        // }}
-                                
-                                        onClick={() => {
-                                            if (img) forceDownload(img, `image-${index}.jpg`);
-                                        }}
-
-                                        // onClick={() => {
-                                        //     const link = document.createElement("a");
-                                        //     link.href = img;
-                                        //     link.download = `image-${index}.jpg`;
-                                        //     link.target = "_blank"; // 🆕 mở tab mới
-                                        //     link.rel = "noopener noreferrer";
-                                        //     document.body.appendChild(link);
-                                        //     link.click();
-                                        //     document.body.removeChild(link);
-                                        // }}
-                                    >
-                                        <CloudUpload fontSize="small" />
-                                    </IconButton>
-                                    <IconButton
-                                        size="small"
-                                        color="error"
-                                        onClick={() => setCapturedImages(prev => prev.filter((_, i) => i !== index))}
-                                    >
-                                        <Close fontSize="small" />
-                                    </IconButton>
-                                </Box>
-                            </Box>
-                        ))}
-
-                        {/* Video đã quay */}
-                        {recordedVideos.map((vid, index) => (
-                            <Box key={`vid-${index}`} className="relative w-52 h-36 flex-shrink-0 border rounded overflow-hidden">
-                                <video src={vid} controls className="object-cover w-full h-full" />
-
-                                <Box className="absolute top-1 left-1 flex gap-1">
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                            if (vid) forceDownload(vid, `video-${index}.mp4`);
-                                        }}
-
-                                    // onClick={() => {
-                                    //     const link = document.createElement("a");
-                                    //     console.log('link', link);
-
-                                    //     link.href = vid;
-                                    //     link.download = `video-${index}.mp4`; // bạn có thể dùng .webm nếu upload là webm
-                                    //     link.target = "_blank"; // 🆕 mở tab mới
-                                    //     link.rel = "noopener noreferrer";
-                                    //     document.body.appendChild(link);
-                                    //     link.click();
-                                    //     document.body.removeChild(link);
-                                    // }}
-                                    >
-                                        <CloudUpload fontSize="small" />
-                                    </IconButton>
-                                    <IconButton
-                                        size="small"
-                                        color="error"
-                                        onClick={() => setRecordedVideos(prev => prev.filter((_, i) => i !== index))}
-                                    >
-                                        <Close fontSize="small" />
-                                    </IconButton>
-                                </Box>
-                            </Box>
-                        ))}
-                    </Box>
-                    <IconButton>
-                        <KeyboardArrowRight />
-                    </IconButton>
-                </Box>
-            </Box>
+            )}
         </div>
     )
 }
