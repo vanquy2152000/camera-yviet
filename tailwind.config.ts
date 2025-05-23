@@ -6,6 +6,7 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+    important: true, // This helps Tailwind override MUI styles
   theme: {
     extend: {
       colors: {
